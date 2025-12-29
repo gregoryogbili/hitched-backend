@@ -1,0 +1,327 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Hitched</title>
+
+<style>
+body {
+  font-family: Arial, sans-serif;
+  max-width: 900px;
+  margin: 40px auto;
+  line-height: 1.5;
+}
+
+h1 { margin-bottom: 10px; }
+h2 { margin-top: 30px; }
+
+input, select, button {
+  width: 100%;
+  padding: 9px;
+  margin: 6px 0;
+}
+
+button {
+  cursor: pointer;
+}
+
+.card {
+  border: 1px solid #ddd;
+  padding: 14px;
+  margin: 14px 0;
+  border-radius: 6px;
+}
+
+.status {
+  font-weight: bold;
+  margin-bottom: 6px;
+}
+
+.created { color: #777; }
+.invite_sent { color: #c77c02; }
+.matched { color: #2b8a3e; }
+
+.notice {
+  background: #f9f9f9;
+  padding: 10px;
+  font-size: 0.9em;
+  border-left: 4px solid #999;
+  margin-bottom: 10px;
+}
+
+.hint {
+  font-size: 0.85em;
+  color: #666;
+  margin-bottom: 8px;
+}
+
+/* ===== Evaluation UI ===== */
+.eval-box {
+  margin-top: 12px;
+  padding: 12px;
+  background: #fafafa;
+  border-radius: 6px;
+  border: 1px solid #eee;
+}
+
+.score-bar {
+  width: 100%;
+  height: 14px;
+  background: #eee;
+  border-radius: 7px;
+  overflow: hidden;
+  margin: 6px 0;
+}
+
+.score-fill { height: 100%; }
+
+.score-weak { background: #d9534f; }
+.score-mid { background: #f0ad4e; }
+.score-strong { background: #5cb85c; }
+
+.grade {
+  font-weight: bold;
+  margin-top: 6px;
+}
+
+.note {
+  font-size: 0.9em;
+  color: #555;
+}
+
+/* ===== Timeline ===== */
+.timeline {
+  margin-top: 10px;
+  padding-left: 18px;
+}
+.timeline li {
+  margin: 6px 0;
+  font-size: 0.9em;
+}
+.badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 12px;
+  font-size: 0.85em;
+  margin-right: 8px;
+  border: 1px solid #ddd;
+}
+</style>
+</head>
+
+<body>
+
+<h1>Hitched</h1>
+<div class="hint">Intentional matching. No swiping.</div>
+
+<h2>Sign in</h2>
+<input id="email" placeholder="Email address">
+<input id="password" type="password" placeholder="Password">
+<button onclick="login()">Login / Register</button>
+
+<hr>
+
+<h2>Your profile</h2>
+<div class="notice">
+Hitched currently supports <b>heterosexual matching only</b> (male ↔ female).
+</div>
+
+<select id="gender" onchange="syncSeeking()">
+  <option value="">Your gender</option>
+  <option value="male">Male</option>
+  <option value="female">Female</option>
+</select>
+
+<select id="seeking" disabled></select>
+
+<input id="age" type="number" placeholder="Age">
+<input id="location" placeholder="City (e.g. Birmingham)">
+
+<select id="intent">
+  <option value="">Relationship intent</option>
+  <option value="long_term">Long-term relationship</option>
+  <option value="marriage">Marriage</option>
+</select>
+
+<input id="values" placeholder="Core values (comma-separated)">
+<input id="lifestyle" placeholder="Lifestyle traits (comma-separated)">
+
+<button onclick="saveProfile()">Save profile</button>
+
+<hr>
+
+<h2>Start a match</h2>
+<div class="hint">
+Create a match first, then invite the other person by email.
+</div>
+
+<input id="inviteEmail" placeholder="Invite by email">
+<button onclick="createMatch()">Create match</button>
+<button onclick="sendInvite()">Send invite</button>
+
+<h2>Your matches</h2>
+<button onclick="loadMatches()">Refresh matches</button>
+<div id="matches"></div>
+
+<script>
+/* =========================
+   AUTH
+========================= */
+function token() { return localStorage.getItem("token"); }
+function setToken(t) { localStorage.setItem("token", t); }
+
+async function login() {
+  const payload = {
+    email: email.value.trim(),
+    password: password.value
+  };
+
+  let r = await fetch("/auth/login", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload)
+  });
+
+  if (!r.ok) {
+    r = await fetch("/auth/register", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload)
+    });
+  }
+
+  const d = await r.json();
+
+  if (d.access_token) {
+    setToken(d.access_token);
+    localStorage.setItem("email", payload.email);
+    alert("Signed in");
+  } else {
+    alert(d.error || "Sign-in failed");
+  }
+}
+
+/* =========================
+   HELPERS
+========================= */
+async function apiFetch(url, options = {}) {
+  options.headers = {
+    "Content-Type": "application/json",
+    "Authorization": "Bearer " + token()
+  };
+  const r = await fetch(url, options);
+  if (!r.ok) throw new Error("Request failed");
+  return r;
+}
+
+/* =========================
+   PROFILE
+========================= */
+function syncSeeking() {
+  seeking.innerHTML = "";
+  if (gender.value === "male") seeking.innerHTML = "<option>female</option>";
+  if (gender.value === "female") seeking.innerHTML = "<option>male</option>";
+}
+
+async function saveProfile() {
+  await apiFetch("/profile/me", {
+    method: "POST",
+    body: JSON.stringify({
+      gender: gender.value,
+      seeking_gender: seeking.value,
+      age: Number(age.value),
+      location: location.value,
+      intent: intent.value,
+      values: values.value.split(",").map(v => v.trim()).filter(Boolean),
+      lifestyle: lifestyle.value.split(",").map(v => v.trim()).filter(Boolean)
+    })
+  });
+  alert("Profile saved");
+}
+
+/* =========================
+   MATCHES
+========================= */
+async function createMatch() {
+  await apiFetch("/match/create", { method: "POST" });
+  loadMatches();
+}
+
+async function sendInvite() {
+  await apiFetch("/match/invite", {
+    method: "POST",
+    body: JSON.stringify({ email: inviteEmail.value })
+  });
+  loadMatches();
+}
+
+function friendlyStatus(m) {
+  if (m.status === "created") return "Match created — invite not sent";
+  if (m.status === "invite_sent") return "Invite sent — waiting for reply";
+  if (m.status === "matched") return "You’re matched 🎉";
+  return m.status;
+}
+
+async function loadMatches() {
+  const r = await apiFetch("/me/matches");
+  const d = await r.json();
+  matches.innerHTML = "";
+
+  d.matches.forEach(m => {
+    const card = document.createElement("div");
+    card.className = "card";
+
+    const s = document.createElement("div");
+    s.className = "status " + m.status;
+    s.textContent = friendlyStatus(m);
+    card.appendChild(s);
+
+    if (m.status === "matched") {
+      const evalBox = document.createElement("div");
+      evalBox.className = "eval-box";
+
+      if (m.compatibility_history && m.compatibility_history.length > 0) {
+        const latest = m.compatibility_history[m.compatibility_history.length - 1];
+        const score = latest.score || 0;
+
+        const bar = document.createElement("div");
+        bar.className = "score-bar";
+
+        const fill = document.createElement("div");
+        fill.className =
+          "score-fill " +
+          (score >= 70 ? "score-strong" :
+           score >= 60 ? "score-mid" : "score-weak");
+        fill.style.width = score + "%";
+
+        bar.appendChild(fill);
+
+        const g = document.createElement("div");
+        g.className = "grade";
+        g.textContent = latest.grade + " compatibility (" + score + "/100)";
+
+        evalBox.appendChild(bar);
+        evalBox.appendChild(g);
+      }
+
+      const otherUserId = m.users.find(u => u !== m.users[0]);
+      if (otherUserId) {
+        const btn = document.createElement("button");
+        btn.textContent = "Re-evaluate compatibility";
+        btn.onclick = async () => {
+          await apiFetch("/match/evaluate/" + otherUserId, { method: "POST" });
+          loadMatches();
+        };
+        evalBox.appendChild(btn);
+      }
+
+      card.appendChild(evalBox);
+    }
+
+    matches.appendChild(card);
+  });
+}
+</script>
+
+</body>
+</html>
